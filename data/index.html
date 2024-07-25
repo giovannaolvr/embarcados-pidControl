@@ -1,0 +1,265 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+  <title>ESP Web Server</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <style>
+    html {
+      font-family: Arial, Helvetica, sans-serif;
+    }
+    h1 {
+      font-size: 1.8rem;
+      color: white;
+      text-align: center;
+    }
+    h2 {
+      font-size: 1.5rem;
+      font-weight: bold;
+      color: #143642;
+    }
+    .topnav {
+      overflow: hidden;
+      background-color: #143642;
+      text-align: center;
+    }
+    body {
+      margin: 0;
+      background-color: #d9d9d9;
+    }
+    .content {
+      display: flex;
+      flex-wrap: wrap;
+      padding: 30px;
+      max-width: 100%;
+      margin: 0 auto;
+    }
+    .card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 100%;
+      background-color: #D9D9D9;
+      box-shadow: 2px 2px 12px 1px rgba(140,140,140,.5);
+      padding: 10px;
+      margin: 10px 0;
+    }
+    .input-section {
+      display: flex;
+      justify-content: center;
+      flex: 1;
+      padding: 10px;
+    }
+    .charts-section {
+      flex: 2;
+      padding: 10px;
+    }
+    .button {
+      padding: 15px 50px;
+      font-size: 24px;
+      text-align: center;
+      outline: none;
+      color: #fff;
+      background-color: #143642;
+      border: none;
+      border-radius: 5px;
+      user-select: none;
+    }
+    .button:active {
+      background-color: #102b35;
+      box-shadow: 2px 2px #CDCDCD;
+      transform: translateY(2px);
+    }
+    .state {
+      font-size: 1.5rem;
+      color:#8c8c8c;
+      font-weight: bold;
+    }
+    .input-group {
+      margin: 20px 0;
+    }
+    .input-group input {
+      width: 100px;
+      padding: 5px;
+      font-size: 16px;
+    }
+    .chart-container {
+      margin-top: 20px;
+    }
+    .chart {
+      height: 400px;
+    }
+    @media (max-width: 768px) {
+      .input-section, .charts-section {
+        flex-direction: column;
+        align-items: center;
+      }
+      .button {
+        padding: 10px 30px;
+        font-size: 18px;
+      }
+      .input-group input {
+        width: 80px;
+        font-size: 14px;
+      }
+      .chart {
+        height: 300px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="topnav">
+    <h1>ESP WebSocket Server</h1>
+  </div>
+  <div class="content">
+    <div class="input-section">
+      <div class="card">
+        <h2>Output - GPIO 2</h2>
+        <p class="state">state: <span id="state">%STATE%</span></p>
+        <p><button id="button" class="button">Toggle</button></p>
+        
+        <div class="input-group">
+          <input type="text" id="kp" placeholder="Kp" />
+          <input type="text" id="ki" placeholder="Ki" />
+          <input type="text" id="kd" placeholder="Kd" />
+        </div>
+        <p><button id="send" class="button">Send Values</button></p>
+      </div>
+    </div>
+    <div class="charts-section">
+      <div class="card">
+        <h2>Setpoint & Voltage Y</h2>
+        <div id="spChart" class="chart"></div>
+      </div>
+      <div class="card">
+        <h2>Control Signal (u)</h2>
+        <div id="uChart" class="chart"></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    var gateway = `ws://${window.location.hostname}/ws`;
+    var websocket;
+
+    function updateCharts(u, sp, voltageY) {
+      var now = new Date();
+      
+      var uData = {
+        x: [now],
+        y: [u],
+        mode: 'lines',
+        line: {color: 'red'}
+      };
+
+      var spData = {
+        x: [now],
+        y: [sp],
+        mode: 'lines',
+        line: {color: 'blue'}
+      };
+
+      var voltageYData = {
+        x: [now],
+        y: [voltageY],
+        mode: 'lines',
+        line: {color: 'green'}
+      };
+
+      Plotly.extendTraces('uChart', {x: [[now]], y: [[u]]}, [0]);
+      Plotly.extendTraces('spChart', {x: [[now]], y: [[sp]]}, [0]);
+      Plotly.extendTraces('spChart', {x: [[now]], y: [[voltageY]]}, [1]);
+
+      Plotly.redraw('uChart');
+      Plotly.redraw('spChart');
+    }
+
+    function initWebSocket() {
+      console.log('Trying to open a WebSocket connection...');
+      websocket = new WebSocket(gateway);
+      websocket.onopen = onOpen;
+      websocket.onclose = onClose;
+      websocket.onmessage = onMessage;
+    }
+
+    function onOpen(event) {
+      console.log('Connection opened');
+    }
+
+    function onClose(event) {
+      console.log('Connection closed');
+      setTimeout(initWebSocket, 2000);
+    }
+
+    function onMessage(event) {
+      var data = event.data.split(':');
+      if (data[0] === 'plotData') {
+        var [u, sp, voltageY] = data[1].split(',').map(Number);
+        console.log(`Received U: ${u}, Setpoint: ${sp}, VoltageY: ${voltageY}`);
+        updateCharts(u, sp, voltageY);
+      } else if (event.data == "1") {
+        document.getElementById('state').innerHTML = "ON";
+      } else {
+        document.getElementById('state').innerHTML = "OFF";
+      }
+    }
+
+    function onLoad(event) {
+      initWebSocket();
+      initButton();
+      initSendButton();
+
+      var uLayout = {
+        showlegend: false, 
+        xaxis: {
+          title: 'Time',
+          visible: true
+        },
+        yaxis: {
+          title: 'Control Signal (u)',
+          visible: true
+        }
+      };
+      var spLayout = {
+        showlegend: false, 
+        xaxis: {
+          title: 'Time',
+          visible: true
+        },
+        yaxis: {
+          title: 'Setpoint & Voltage Y',
+          visible: true
+        }
+      };
+
+      Plotly.newPlot('uChart', [{x: [], y: [], mode: 'lines', line: {color: 'red'}}], uLayout);
+      Plotly.newPlot('spChart', [
+        {x: [], y: [], mode: 'lines', line: {color: 'blue'}},
+        {x: [], y: [], mode: 'lines', line: {color: 'green'}}
+      ], spLayout);
+    }
+
+    function initButton() {
+      document.getElementById('button').addEventListener('click', function() {
+        websocket.send('toggle');
+      });
+    }
+
+    function initSendButton() {
+      document.getElementById('send').addEventListener('click', function() {
+        var kpValue = parseFloat(document.getElementById('kp').value);
+        var kiValue = parseFloat(document.getElementById('ki').value);
+        var kdValue = parseFloat(document.getElementById('kd').value);
+        if (!isNaN(kpValue) && !isNaN(kiValue) && !isNaN(kdValue)) {
+          websocket.send(`setTunings:${kpValue},${kiValue},${kdValue}`);
+        } else {
+          alert('Please enter valid numeric values for Kp, Ki, and Kd.');
+        }
+      });
+    }
+
+    window.addEventListener('load', onLoad);
+  </script>
+</body>
+</html>
